@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Emotiv Connection</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1a1a2e; color: white; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .connected { background: rgba(0, 255, 0, 0.2); }
+        .disconnected { background: rgba(255, 0, 0, 0.2); }
+        .command { font-size: 2em; text-align: center; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <h1>Simple Emotiv BCI</h1>
+    <div id="status" class="status disconnected">Disconnected</div>
+    <div id="command" class="command">NEUTRAL</div>
+    <div id="log" style="height: 400px; overflow-y: auto; background: rgba(0,0,0,0.5); padding: 10px;"></div>
+
+    <script>
+        const user = {
+            clientId: '2JT5PfdoaUL4Pfzc4CdX4JnAjFtgebCa5JJddkA2',
+            clientSecret: 'mNJM5L5a9iXyI1iO74xhVoXs1SqcCfHfmE8KL6HefgDERmT1MrmDHsq26DPAP6Tmh5WB37C6eE34KrQUs3Va9qP1fAMjCkhMwuUgVpkNNxw4VWVz7DAqadZ476nTvfMr',
+            license: '',
+            debit: 1
+        };
+
+        let socket;
+        let authToken;
+        let sessionId;
+        let headsetId;
+
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += new Date().toLocaleTimeString() + ': ' + message + '<br>';
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function connect() {
+            socket = new WebSocket('wss://localhost:6868');
+            
+            socket.onopen = () => {
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'status connected';
+                log('✅ WebSocket connected');
+                requestAccess();
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                log('📨 ' + JSON.stringify(data));
+                handleMessage(data);
+            };
+
+            socket.onerror = (error) => {
+                log('❌ WebSocket error');
+                document.getElementById('status').textContent = 'Error';
+                document.getElementById('status').className = 'status disconnected';
+            };
+
+            socket.onclose = () => {
+                log('🔴 WebSocket closed');
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'status disconnected';
+            };
+        }
+
+        function send(message) {
+            socket.send(JSON.stringify(message));
+            log('📤 ' + JSON.stringify(message));
+        }
+
+        function requestAccess() {
+            send({
+                jsonrpc: "2.0",
+                method: "requestAccess",
+                params: {
+                    clientId: user.clientId,
+                    clientSecret: user.clientSecret
+                },
+                id: 1
+            });
+        }
+
+        function authorize() {
+            send({
+                jsonrpc: "2.0",
+                method: "authorize",
+                params: {
+                    clientId: user.clientId,
+                    clientSecret: user.clientSecret,
+                    license: user.license,
+                    debit: user.debit
+                },
+                id: 2
+            });
+        }
+
+        function queryHeadsets() {
+            send({
+                jsonrpc: "2.0",
+                method: "queryHeadsets",
+                params: {},
+                id: 3
+            });
+        }
+
+        function createSession() {
+            send({
+                jsonrpc: "2.0",
+                method: "createSession",
+                params: {
+                    cortexToken: authToken,
+                    headset: headsetId,
+                    status: "active"
+                },
+                id: 4
+            });
+        }
+
+        function subscribe() {
+            send({
+                jsonrpc: "2.0",
+                method: "subscribe",
+                params: {
+                    cortexToken: authToken,
+                    session: sessionId,
+                    streams: ["com"]
+                },
+                id: 5
+            });
+        }
+
+        function handleMessage(data) {
+            if (data.id === 1) { // requestAccess response
+                if (data.result && data.result.accessGranted) {
+                    log('✅ Access granted');
+                    authorize();
+                } else {
+                    log('❌ Access denied - check Cortex UI');
+                }
+            }
+            else if (data.id === 2) { // authorize response
+                if (data.result && data.result.cortexToken) {
+                    authToken = data.result.cortexToken;
+                    log('✅ Authorized, token received');
+                    queryHeadsets();
+                } else {
+                    log('❌ Authorization failed');
+                }
+            }
+            else if (data.id === 3) { // queryHeadsets response
+                if (data.result && data.result.length > 0) {
+                    headsetId = data.result[0].id;
+                    log('✅ Headset found: ' + headsetId);
+                    createSession();
+                } else {
+                    log('❌ No headset found');
+                }
+            }
+            else if (data.id === 4) { // createSession response
+                if (data.result && data.result.id) {
+                    sessionId = data.result.id;
+                    log('✅ Session created: ' + sessionId);
+                    subscribe();
+                } else {
+                    log('❌ Session creation failed');
+                }
+            }
+            else if (data.id === 5) { // subscribe response
+                if (data.result) {
+                    log('✅ Subscribed to mental commands');
+                    log('🧠 Ready for mental commands!');
+                } else {
+                    log('❌ Subscription failed');
+                }
+            }
+            else if (data.com) { // Mental command data
+                const command = data.com[0];
+                const strength = data.com[1];
+                document.getElementById('command').textContent = command.toUpperCase();
+                log(`🧠 ${command} (${strength.toFixed(2)})`);
+            }
+        }
+
+        window.onload = () => {
+            log('Starting connection...');
+            connect();
+        };
+    </script>
+</body>
+</html>
